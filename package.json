@@ -1,0 +1,27 @@
+{
+  "name": "@openclaw/liuyao",
+  "version": "1.0.0",
+  "description": "六爻易经占卜 - 基于《周易》六爻占卜法的智能解卦技能",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx test.mjs"
+  },
+  "keywords": [
+    "openclaw",
+    "skill",
+    "易经",
+    "周易",
+    "占卜"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "openclaw": "^2026.3.12"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
