@@ -1,0 +1,10 @@
+{
+  "id": "liuyao",
+  "name": "@openclaw/liuyao",
+  "version": "1.0.0",
+  "description": "六爻易经占卜 - 基于《周易》六爻占卜法的智能解卦技能",
+  "author": "",
+  "license": "MIT",
+  "configSchema": {},
+  "main": "./dist/index.js"
+}
