@@ -1,8 +1,767 @@
 /**
  * 六爻易经 - 核心算法引擎
  * 基于《周易》六爻占卜法，计算本卦、变卦、互卦、综卦、交卦、错卦
+ * 以及八字排盘算法（年柱、月柱、日柱、时柱）
+ * 使用 lunar-javascript 库实现精确的日柱计算
  */
-// --- 1. 数据字典 ---
+import { Solar, Lunar } from 'lunar-javascript';
+// ==================== 八字排盘算法 ====================
+/** 天干数组 */
+export const TIANGAN = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
+/** 地支数组 */
+export const DIZHI = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+/** 时辰名称映射（地支） */
+export const SHICHEN_DIZHI = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+/** 年上起月口诀表（年干 -> 寅月起首天干索引） */
+const YUE_JIA_KOUJUE = {
+    '甲': 2, '己': 2, // 甲己之年丙作首
+    '乙': 4, '庚': 4, // 乙庚之岁戊为头
+    '丙': 6, '辛': 6, // 丙辛之岁寻庚起
+    '丁': 8, '壬': 8, // 丁壬壬位顺行流
+    '癸': 0, '戊': 0, // 戊癸之年何方发，甲寅之上好追求
+};
+// ==================== 八字五行分析算法 ====================
+/** 天干五行 */
+const GAN_WUXING = {
+    '甲': '木', '乙': '木',
+    '丙': '火', '丁': '火',
+    '戊': '土', '己': '土',
+    '庚': '金', '辛': '金',
+    '壬': '水', '癸': '水'
+};
+/** 地支五行 */
+const ZHI_WUXING = {
+    '子': '水', '丑': '土', '寅': '木', '卯': '木',
+    '辰': '土', '巳': '火', '午': '火', '未': '土',
+    '申': '金', '酉': '金', '戌': '土', '亥': '水'
+};
+/** 五行相生 —— 正确！我生 */
+const WUXING_SHENG = {
+    '金': '水', // 金生水
+    '水': '木', // 水生木
+    '木': '火', // 木生火
+    '火': '土', // 火生土
+    '土': '金' // 土生金
+};
+/** 五行相克 —— 正确！克我 */
+const WUXING_KE = {
+    '金': '火', // 火克金
+    '水': '土', // 土克水
+    '木': '金', // 金克木
+    '火': '水', // 水克火
+    '土': '木' // 木克土
+};
+/** 季节定义 */
+const SEASON_MAP = {
+    '寅': '春', '卯': '春', '辰': '春',
+    '巳': '夏', '午': '夏', '未': '夏',
+    '申': '秋', '酉': '秋', '戌': '秋',
+    '亥': '冬', '子': '冬', '丑': '冬'
+};
+/** 季节调候用神 */
+const SEASON_TIAOHOU = {
+    '春': '金', // 春天喜金
+    '夏': '水', // 夏天喜水
+    '秋': '木', // 秋天喜木
+    '冬': '火' // 冬天喜火
+};
+/**
+ * 获取季节
+ */
+function getSeason(monthZhi) {
+    return SEASON_MAP[monthZhi] || '冬';
+}
+/**
+ * 获取地支藏干主气（简化版）
+ */
+/**
+ * 获取地支本气天干（正确古法本气，仅1个）
+ */
+function getZhiMainGan(zhi) {
+    const map = {
+        子: '壬', // 本气水
+        丑: '己', // 本气土
+        寅: '甲', // 本气木
+        卯: '乙', // 本气木
+        辰: '戊', // 本气土
+        巳: '丙', // 本气火
+        午: '丁', // 本气火
+        未: '己', // 本气土
+        申: '庚', // 本气金
+        酉: '辛', // 本气金
+        戌: '戊', // 本气土
+        亥: '壬', // 本气水
+    };
+    return map[zhi] || '戊';
+}
+/**
+ * 【古法子平专业版】八字五行与格局分析
+ */
+export function analyzeBazi(yearZhu, monthZhu, dayZhu, hourZhu) {
+    // 1. 提取四柱天干地支
+    const yearGan = yearZhu[0];
+    const yearZhi = yearZhu[1];
+    const monthGan = monthZhu[0];
+    const monthZhi = monthZhu[1];
+    const dayGan = dayZhu[0];
+    const dayZhi = dayZhu[1];
+    const hourGan = hourZhu[0];
+    const hourZhi = hourZhu[1];
+    // 2. 日主（核心：本人）
+    const riZhu = dayGan;
+    const riWuXing = GAN_WUXING[riZhu];
+    const allGan = [yearGan, monthGan, dayGan, hourGan];
+    const allZhi = [yearZhi, monthZhi, dayZhi, hourZhi];
+    // 3. 提取所有五行（天干 + 地支本气）
+    const allWuXing = [
+        GAN_WUXING[yearGan],
+        GAN_WUXING[monthGan],
+        GAN_WUXING[dayGan],
+        GAN_WUXING[hourGan],
+        GAN_WUXING[getZhiMainGan(yearZhi)], // 地支本气五行
+        GAN_WUXING[getZhiMainGan(monthZhi)],
+        GAN_WUXING[getZhiMainGan(dayZhi)],
+        GAN_WUXING[getZhiMainGan(hourZhi)],
+    ];
+    // 五行统计
+    const wuXingCount = { '木': 0, '火': 0, '土': 0, '金': 0, '水': 0 };
+    allWuXing.forEach(wx => wx && (wuXingCount[wx]++));
+    // 4. 月令 + 季节 + 调候（古法第一优先）
+    const monthWuXing = ZHI_WUXING[monthZhi];
+    const season = getSeason(monthZhi);
+    const tiaoHouWuXing = SEASON_TIAOHOU[season];
+    const hasTiaoHou = allWuXing.includes(tiaoHouWuXing);
+    const tiaoHouJi = !!tiaoHouWuXing;
+    // ==============================================
+    // 【古法旺衰】得令 → 得地 → 得势
+    // ==============================================
+    const deLing = monthWuXing === riWuXing || WUXING_SHENG[monthWuXing] === riWuXing;
+    const diZhiGen = allZhi.filter(z => ZHI_WUXING[z] === riWuXing || WUXING_SHENG[riWuXing] === ZHI_WUXING[z]).length;
+    const deDi = diZhiGen > 0;
+    const ganShi = allGan.filter(g => GAN_WUXING[g] === riWuXing || WUXING_SHENG[riWuXing] === GAN_WUXING[g]).length;
+    const deShi = ganShi >= 2;
+    let isStrong;
+    let wangShuaiDesc;
+    if (deLing && (deDi || deShi)) {
+        isStrong = true;
+        wangShuaiDesc = "身旺";
+    }
+    else if (!deLing && !deDi && !deShi) {
+        isStrong = false;
+        wangShuaiDesc = "身弱";
+    }
+    else if (deLing) {
+        isStrong = true;
+        wangShuaiDesc = "偏旺";
+    }
+    else {
+        isStrong = false;
+        wangShuaiDesc = "偏弱";
+    }
+    // ==============================================
+    // 【古法从格】严格判断
+    // ==============================================
+    const isCongGe = !deDi && !deLing;
+    const isZhuanWang = deLing && deDi && ganShi >= 3;
+    const isCongWang = isCongGe && allWuXing.filter(wx => wx === riWuXing).length >= 4;
+    const isCongRuo = isCongGe && allWuXing.filter(wx => wx !== riWuXing).length >= 6;
+    // ==============================================
+    // 【古法格局】
+    // ==============================================
+    let geJu = "普通格局";
+    if (isZhuanWang) {
+        geJu = "专旺格";
+    }
+    else if (isCongWang) {
+        geJu = "从旺格";
+    }
+    else if (isCongRuo) {
+        geJu = "从弱格";
+    }
+    else if (tiaoHouJi && !hasTiaoHou) {
+        geJu = "调候为急格";
+    }
+    else if (tiaoHouJi && hasTiaoHou) {
+        geJu = "调候成格";
+    }
+    else {
+        geJu = "普通扶抑格";
+    }
+    // ==============================================
+    // 【穷通宝鉴 · 全日主通用】调候用神（自动适配所有八字）
+    // ==============================================
+    function getTiaoHouYongShen(riGan, monthZhi) {
+        const isSpring = ['寅', '卯', '辰'].includes(monthZhi);
+        const isSummer = ['巳', '午', '未'].includes(monthZhi);
+        const isAutumn = ['申', '酉', '戌'].includes(monthZhi);
+        const isWinter = ['亥', '子', '丑'].includes(monthZhi);
+        switch (riGan) {
+            // 金：庚辛
+            case '庚':
+            case '辛':
+                if (isWinter)
+                    return '水';
+                if (isSummer)
+                    return '水';
+                if (isSpring)
+                    return '金';
+                if (isAutumn)
+                    return '水';
+                return '水';
+            // 木：甲乙
+            case '甲':
+            case '乙':
+                if (isWinter)
+                    return '火';
+                if (isSummer)
+                    return '水';
+                if (isSpring)
+                    return '金';
+                if (isAutumn)
+                    return '水';
+                return '水';
+            // 火：丙丁
+            case '丙':
+            case '丁':
+                if (isWinter)
+                    return '木';
+                if (isSummer)
+                    return '水';
+                if (isSpring)
+                    return '金';
+                if (isAutumn)
+                    return '木';
+                return '水';
+            // 水：壬癸
+            case '壬':
+            case '癸':
+                if (isWinter)
+                    return '木';
+                if (isSummer)
+                    return '金';
+                if (isSpring)
+                    return '金';
+                if (isAutumn)
+                    return '木';
+                return '金';
+            // 土：戊己
+            case '戊':
+            case '己':
+                if (isWinter)
+                    return '火';
+                if (isSummer)
+                    return '水';
+                if (isSpring)
+                    return '火';
+                if (isAutumn)
+                    return '金';
+                return '火';
+            default:
+                return '火';
+        }
+    }
+    // 自动取用神
+    const yongShen = getTiaoHouYongShen(riZhu, monthZhi);
+    // ================= 核心修复 =================
+    // 喜神 = 生用神的五行（正确逻辑）
+    const WUXING_SHENG_BY = {
+        '金': '土', '水': '金', '木': '水', '火': '木', '土': '火'
+    };
+    const xiShen = [WUXING_SHENG_BY[yongShen]];
+    // 忌神 = 克用神的五行
+    const jiShen = [WUXING_KE[yongShen]];
+    const wuXingBalance = getWuXingBalance(wuXingCount);
+    const suggestions = generateSuggestions(wuXingCount, isStrong, yongShen, xiShen, jiShen);
+    return {
+        bazi: `${yearZhu} ${monthZhu} ${dayZhu} ${hourZhu}`,
+        yearZhu, monthZhu, dayZhu, hourZhu,
+        shichen: hourZhi + '时',
+        wuXing: {
+            year: GAN_WUXING[yearGan],
+            month: GAN_WUXING[monthGan],
+            day: riWuXing,
+            hour: GAN_WUXING[hourGan]
+        },
+        wuXingCount,
+        wuXingBalance,
+        riZhu,
+        riWuXing,
+        riShengXiao: getShengXiao(yearZhi),
+        wangShuai: {
+            isStrong,
+            description: wangShuaiDesc,
+            deLing,
+            deDi,
+            deShi
+        },
+        yongShen,
+        xiShen,
+        jiShen,
+        geJu,
+        suggestions
+    };
+}
+/**
+ * 获取生肖
+ */
+function getShengXiao(zhi) {
+    const shengXiaoMap = {
+        '子': '鼠', '丑': '牛', '寅': '虎', '卯': '兔',
+        '辰': '龙', '巳': '蛇', '午': '马', '未': '羊',
+        '申': '猴', '酉': '鸡', '戌': '狗', '亥': '猪'
+    };
+    return shengXiaoMap[zhi] || '未知';
+}
+/**
+ * 获取五行平衡描述
+ */
+function getWuXingBalance(count) {
+    const maxVal = Math.max(...Object.values(count));
+    const minVal = Math.min(...Object.values(count));
+    const maxWx = Object.entries(count).find(([k, v]) => v === maxVal)?.[0] || '土';
+    const minWx = Object.entries(count).find(([k, v]) => v === minVal)?.[0] || '水';
+    return `${maxWx}旺，${minWx}弱`;
+}
+/**
+ * 生成生活建议
+ */
+function generateSuggestions(wuXingCount, isStrong, yongShen, xiShen, jiShen) {
+    // 幸运方位
+    const directionMap = {
+        '木': { lucky: ['东方', '东南'], avoid: ['西方', '西北'] },
+        '火': { lucky: ['南方', '东南'], avoid: ['北方', '东北'] },
+        '土': { lucky: ['西南', '东北', '南方'], avoid: ['东方', '东南'] },
+        '金': { lucky: ['西方', '西北', '北方'], avoid: ['南方', '东方'] },
+        '水': { lucky: ['北方', '西北'], avoid: ['南方', '西南'] }
+    };
+    const dirInfo = directionMap[yongShen] || { lucky: ['东方'], avoid: ['西方'] };
+    // 幸运颜色
+    const colorMap = {
+        '木': { lucky: ['绿色', '青色', '墨绿', '蓝色'], avoid: ['白色', '金色', '银色'] },
+        '火': { lucky: ['红色', '紫色', '橙色', '暖色'], avoid: ['黑色', '深蓝色'] },
+        '土': { lucky: ['黄色', '棕色', '咖啡色', '米色'], avoid: ['绿色', '青色'] },
+        '金': { lucky: ['白色', '金色', '银色', '灰色'], avoid: ['红色', '紫色'] },
+        '水': { lucky: ['黑色', '深蓝色', '灰色', '白色'], avoid: ['黄色', '棕色'] }
+    };
+    const colorInfo = colorMap[yongShen] || { lucky: ['黑色'], avoid: ['白色'] };
+    // 适合行业
+    const industryMap = {
+        '木': ['教育', '文化', '出版', '绿植', '木材', '服装', '健康养生', '心理咨询'],
+        '火': ['餐饮', '电力', '照明', '美妆', '自媒体', '娱乐', '能源'],
+        '土': ['房地产', '建筑', '矿产', '陶瓷', '农业', '畜牧业'],
+        '金': ['金融', '银行', '金属加工', '五金', '汽车', '法律', '政府机构'],
+        '水': ['物流', '贸易', '运输', '水产', '饮品', '美容', '旅游', '互联网', '传媒']
+    };
+    const industries = industryMap[yongShen] || ['服务业'];
+    // 日常习惯建议
+    const habits = [];
+    if (yongShen === '水') {
+        habits.push('多喝水，保持身体湿润');
+        habits.push('多去河边、海边散步');
+        habits.push('多运动出汗');
+    }
+    else if (yongShen === '木') {
+        habits.push('多接触绿植、森林');
+        habits.push('早起早睡，顺应木的生发之气');
+        habits.push('多学习、多表达');
+    }
+    else if (yongShen === '火') {
+        habits.push('保持环境明亮温暖');
+        habits.push('多晒太阳');
+        habits.push('积极社交，多表达热情');
+    }
+    else if (yongShen === '土') {
+        habits.push('保持居住环境干燥整洁');
+        habits.push('适当运动，不要久坐');
+        habits.push('少思虑，多行动');
+    }
+    else if (yongShen === '金') {
+        habits.push('多接触金属物品（首饰等）');
+        habits.push('保持整洁有序');
+        habits.push('做事果断，不要犹豫不决');
+    }
+    return {
+        luckyDirections: dirInfo.lucky,
+        avoidDirections: dirInfo.avoid,
+        luckyColors: colorInfo.lucky,
+        avoidColors: colorInfo.avoid,
+        suitableIndustries: industries,
+        dailyHabits: habits
+    };
+}
+/**
+ * 格式化八字分析输出
+ */
+export function formatBaziAnalysis(analysis) {
+    const lines = [];
+    lines.push(`📅 **八字分析报告**`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**八字**：${analysis.bazi}`);
+    lines.push(`**日主**：${analysis.riZhu}（${analysis.riWuXing}）`);
+    lines.push(`**生肖**：${analysis.riShengXiao}`);
+    lines.push(`**格局**：${analysis.geJu}`);
+    lines.push(`**旺衰**：${analysis.wangShuai.description}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**五行统计**：`);
+    lines.push(`• 木：${analysis.wuXingCount['木']}个`);
+    lines.push(`• 火：${analysis.wuXingCount['火']}个`);
+    lines.push(`• 土：${analysis.wuXingCount['土']}个`);
+    lines.push(`• 金：${analysis.wuXingCount['金']}个`);
+    lines.push(`• 水：${analysis.wuXingCount['水']}个`);
+    lines.push(`**五行平衡**：${analysis.wuXingBalance}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**用神喜神忌神**`);
+    lines.push(`• **用神**：${analysis.yongShen}（主）`);
+    lines.push(`• **喜神**：${analysis.xiShen.join('、')}（辅）`);
+    lines.push(`• **忌神**：${analysis.jiShen.join('、')}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**幸运方位**：${analysis.suggestions.luckyDirections.join('、')}`);
+    lines.push(`**忌讳方位**：${analysis.suggestions.avoidDirections.join('、')}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**幸运颜色**`);
+    lines.push(`${analysis.suggestions.luckyColors.join('、')}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**适合行业**`);
+    lines.push(`${analysis.suggestions.suitableIndustries.join('、')}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**日常建议**`);
+    analysis.suggestions.dailyHabits.forEach((h, i) => {
+        lines.push(`${i + 1}. ${h}`);
+    });
+    lines.push(`━━━━━━━━━━━━━━━`);
+    return lines.join('\n');
+}
+/**
+ * 计算天干索引（60甲子循环）
+ */
+function getYearGanIndex(year) {
+    return (year - 4) % 10;
+}
+/**
+ * 计算地支索引（60甲子循环）
+ */
+function getYearZhiIndex(year) {
+    return (year - 4) % 12;
+}
+/**
+ * 计算年柱
+ */
+export function getYearZhu(year) {
+    const ganIndex = getYearGanIndex(year);
+    const zhiIndex = getYearZhiIndex(year);
+    return TIANGAN[ganIndex] + DIZHI[zhiIndex];
+}
+/**
+ * 根据年份获取年干
+ */
+export function getYearGan(year) {
+    return TIANGAN[getYearGanIndex(year)];
+}
+/**
+ * 计算月柱（基于年干的口诀计算）
+ */
+export function getMonthZhu(year, month) {
+    const yearGan = getYearGan(year);
+    const startGanIndex = YUE_JIA_KOUJUE[yearGan];
+    const monthGanIndex = (startGanIndex + month - 1) % 10;
+    const monthZhiIndex = (month + 1) % 12;
+    return TIANGAN[monthGanIndex] + DIZHI[monthZhiIndex];
+}
+/**
+ * 计算八字中的月份地支
+ */
+export function getMonthZhi(month) {
+    return DIZHI[(month + 1) % 12];
+}
+/**
+ * 将小时转换为时辰索引
+ */
+function getShichenIndex(hour) {
+    if (hour >= 23 || hour < 1)
+        return 0; // 子时
+    return Math.floor((hour + 1) / 2);
+}
+/**
+ * 根据小时获取时辰名称
+ */
+export function getShichenName(hour) {
+    const index = getShichenIndex(hour);
+    return SHICHEN_DIZHI[index] + '时';
+}
+/**
+ * 计算完整八字（使用 lunar-javascript 库，最精确的日柱计算）
+ */
+export function getBazi(year, month, day, hour) {
+    const solar = Solar.fromYmdHms(year, month, day, hour, 0, 0);
+    const lunar = solar.getLunar();
+    const yearZhu = lunar.getYearInGanZhi();
+    const monthZhu = lunar.getMonthInGanZhi();
+    const dayZhu = lunar.getDayInGanZhi();
+    const shiZhu = lunar.getTimeInGanZhi();
+    const shiZhi = shiZhu.charAt(1);
+    const shichenName = shiZhi + '时';
+    return {
+        year: yearZhu,
+        month: monthZhu,
+        day: dayZhu,
+        hour: shiZhu,
+        bazi: `${yearZhu} ${monthZhu} ${dayZhu} ${shiZhu}`,
+        shichen: shichenName,
+        birthTime: `${hour}时`,
+        yearGan: yearZhu.charAt(0),
+        yearZhi: yearZhu.charAt(1),
+        monthGan: monthZhu.charAt(0),
+        monthZhi: monthZhu.charAt(1),
+        dayGan: dayZhu.charAt(0),
+        dayZhi: dayZhu.charAt(1),
+        hourGan: shiZhu.charAt(0),
+        hourZhi: shiZhu.charAt(1),
+    };
+}
+/**
+ * 计算农历生日的八字
+ */
+export function getBaziFromLunar(year, month, day, hour, isLeapMonth = false) {
+    const lunar = Lunar.fromYmdHms(year, month, day, hour, 0, 0, isLeapMonth);
+    const solar = lunar.getSolar();
+    const yearZhu = lunar.getYearInGanZhi();
+    const monthZhu = lunar.getMonthInGanZhi();
+    const dayZhu = lunar.getDayInGanZhi();
+    const shiZhu = lunar.getTimeInGanZhi();
+    const shiZhi = shiZhu.charAt(1);
+    const shichenName = shiZhi + '时';
+    return {
+        year: yearZhu,
+        month: monthZhu,
+        day: dayZhu,
+        hour: shiZhu,
+        bazi: `${yearZhu} ${monthZhu} ${dayZhu} ${shiZhu}`,
+        shichen: shichenName,
+        birthTime: `${hour}时`,
+        lunarYear: year,
+        lunarMonth: month,
+        lunarDay: day,
+        solarDate: `${solar.getYear()}-${solar.getMonth()}-${solar.getDay()}`,
+        yearGan: yearZhu.charAt(0),
+        yearZhi: yearZhu.charAt(1),
+        monthGan: monthZhu.charAt(0),
+        monthZhi: monthZhu.charAt(1),
+        dayGan: dayZhu.charAt(0),
+        dayZhi: dayZhu.charAt(1),
+        hourGan: shiZhu.charAt(0),
+        hourZhi: shiZhu.charAt(1),
+    };
+}
+/**
+ * 解析日期时间字符串
+ */
+export function parseDateTime(input) {
+    let year, month = 1, day = 1, hour = 0;
+    let valid = false;
+    const cleaned = input.trim();
+    const digitsOnly = cleaned.replace(/[-\s:./]/g, '');
+    if (/^\d+$/.test(digitsOnly)) {
+        if (digitsOnly.length >= 4) {
+            year = parseInt(digitsOnly.substring(0, 4));
+            valid = true;
+        }
+        if (digitsOnly.length >= 6)
+            month = parseInt(digitsOnly.substring(4, 6));
+        if (digitsOnly.length >= 8)
+            day = parseInt(digitsOnly.substring(6, 8));
+        if (digitsOnly.length >= 10)
+            hour = parseInt(digitsOnly.substring(8, 10));
+    }
+    if (valid) {
+        if (year < 1900 || year > 2100)
+            valid = false;
+        if (month < 1 || month > 12)
+            valid = false;
+        if (day < 1 || day > 31)
+            valid = false;
+        if (hour < 0 || hour > 23)
+            valid = false;
+    }
+    return { year, month, day, hour, valid };
+}
+// ==================== 今日黄历算法 ====================
+/**
+ * 获取今日黄历信息
+ */
+export function getHuangLi(year, month, day) {
+    const solar = Solar.fromYmd(year, month, day);
+    const lunar = solar.getLunar();
+    const nineStar = lunar.getDayNineStar();
+    const dayYi = lunar.getDayYi() || [];
+    const dayJi = lunar.getDayJi() || [];
+    const dayTianShen = lunar.getDayTianShen();
+    const dayTianShenType = lunar.getDayTianShenType();
+    const dayPositionTai = lunar.getDayPositionTai();
+    const festivals = lunar.getFestivals() || [];
+    const pengZuGan = lunar.getPengZuGan();
+    const pengZuZhi = lunar.getPengZuZhi();
+    const chong = lunar.getChong();
+    const chongDesc = lunar.getChongDesc();
+    const sha = lunar.getSha();
+    const xiu = lunar.getXiu();
+    const xiuLuck = lunar.getXiuLuck();
+    const positionXi = lunar.getPositionXi();
+    const positionXiDesc = lunar.getPositionXiDesc();
+    const positionFu = lunar.getPositionFu();
+    const positionFuDesc = lunar.getPositionFuDesc();
+    const positionCai = lunar.getPositionCai();
+    const positionCaiDesc = lunar.getPositionCaiDesc();
+    const positionYangGui = lunar.getPositionYangGui();
+    const positionYangGuiDesc = lunar.getPositionYangGuiDesc();
+    const positionYinGui = lunar.getPositionYinGui();
+    const positionYinGuiDesc = lunar.getPositionYinGuiDesc();
+    const yearNaYin = lunar.getYearNaYin();
+    const monthNaYin = lunar.getMonthNaYin();
+    const dayNaYin = lunar.getDayNaYin();
+    const jie = lunar.getJie();
+    const qi = lunar.getQi();
+    const yueXiang = lunar.getYueXiang();
+    const week = lunar.getWeek();
+    const weekInChinese = lunar.getWeekInChinese();
+    const yearShengXiao = lunar.getYearShengXiao();
+    const monthShengXiao = lunar.getMonthShengXiao();
+    const dayShengXiao = lunar.getDayShengXiao();
+    const dayXunKong = lunar.getDayXunKong();
+    const dayXun = lunar.getDayXun();
+    const zodiac = solar.getXingZuo();
+    return {
+        solar: {
+            year: solar.getYear(),
+            month: solar.getMonth(),
+            day: solar.getDay(),
+            week: week,
+            weekName: weekInChinese,
+            zodiac: zodiac,
+            fullString: solar.toFullString(),
+        },
+        lunar: {
+            year: lunar.getYearInChinese(),
+            month: lunar.getMonthInChinese(),
+            day: lunar.getDayInChinese(),
+            yearGanZhi: lunar.getYearInGanZhi(),
+            monthGanZhi: lunar.getMonthInGanZhi(),
+            dayGanZhi: lunar.getDayInGanZhi(),
+            yearShengXiao,
+            monthShengXiao,
+            dayShengXiao,
+            fullString: lunar.toFullString(),
+        },
+        ganZhi: {
+            year: lunar.getYearInGanZhi(),
+            month: lunar.getMonthInGanZhi(),
+            day: lunar.getDayInGanZhi(),
+        },
+        naYin: {
+            year: yearNaYin,
+            month: monthNaYin,
+            day: dayNaYin,
+        },
+        pengZu: {
+            gan: pengZuGan,
+            zhi: pengZuZhi,
+        },
+        jiShen: {
+            xi: { position: positionXi, desc: positionXiDesc },
+            fu: { position: positionFu, desc: positionFuDesc },
+            cai: { position: positionCai, desc: positionCaiDesc },
+            yangGui: { position: positionYangGui, desc: positionYangGuiDesc },
+            yinGui: { position: positionYinGui, desc: positionYinGuiDesc },
+        },
+        chongSha: {
+            chong: chong,
+            chongDesc: chongDesc,
+            sha: sha,
+        },
+        xiu: {
+            name: xiu,
+            luck: xiuLuck,
+        },
+        dayYiJi: {
+            yi: dayYi,
+            ji: dayJi,
+        },
+        tianShen: {
+            name: dayTianShen,
+            type: dayTianShenType,
+        },
+        nineStar: {
+            number: nineStar.getNumber(),
+            color: nineStar.getColor(),
+            wuXing: nineStar.getWuXing(),
+            positionDesc: nineStar.getPositionDesc(),
+        },
+        jieQi: {
+            jie: jie,
+            qi: qi,
+        },
+        yueXiang: yueXiang,
+        xunKong: {
+            day: dayXunKong,
+            dayXun: dayXun,
+        },
+        festivals: {
+            main: festivals,
+        },
+    };
+}
+/**
+ * 格式化黄历输出为美观的字符串
+ */
+export function formatHuangLi(huangLi) {
+    const { solar, lunar, ganZhi, naYin, pengZu, chongSha, xiu, dayYiJi, tianShen, nineStar, jieQi, yueXiang, xunKong, festivals, jiShen } = huangLi;
+    const lines = [];
+    lines.push(`📅 **今日黄历**`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**公历日期**：${solar.year}年${solar.month}月${solar.day}日 ${solar.weekName} ${solar.zodiac}`);
+    lines.push(`**农历日期**：${lunar.year} ${lunar.month} ${lunar.day}`);
+    if (festivals.main && festivals.main.length > 0) {
+        lines.push(`**今日节日**：${festivals.main.join(' ')}`);
+    }
+    if (jieQi.jie || jieQi.qi) {
+        lines.push(`**节气**：${jieQi.jie || ''} ${jieQi.qi || ''}`.trim());
+    }
+    lines.push(`**干支**：${ganZhi.year}年 ${ganZhi.month}月 ${ganZhi.day}日`);
+    lines.push(`**生肖**：${lunar.yearShengXiao}年 ${lunar.monthShengXiao}月 ${lunar.dayShengXiao}日`);
+    lines.push(`**纳音五行**：${naYin.year} ${naYin.month} ${naYin.day}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    if (pengZu.gan) {
+        lines.push(`**彭祖百忌**：${pengZu.gan} ${pengZu.zhi}`);
+    }
+    if (chongSha.chong) {
+        lines.push(`**冲煞**：${chongSha.chong} ${chongSha.chongDesc} 煞${chongSha.sha}`);
+    }
+    lines.push(`**日旬空亡**：${xunKong.day} ${xunKong.dayXun}`);
+    lines.push(`**九星**：${nineStar.number} ${nineStar.color} ${nineStar.wuXing} ${nineStar.positionDesc}方`);
+    if (yueXiang) {
+        lines.push(`**月相**：${yueXiang}`);
+    }
+    if (tianShen.name) {
+        lines.push(`**日神**：${tianShen.name}（${tianShen.type}）`);
+    }
+    lines.push(`**星宿**：${xiu.name}（${xiu.luck}）`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    lines.push(`**吉神方位**`);
+    lines.push(`• 喜神：${jiShen.xi.position} ${jiShen.xi.desc}`);
+    lines.push(`• 福神：${jiShen.fu.position} ${jiShen.fu.desc}`);
+    lines.push(`• 财神：${jiShen.cai.position} ${jiShen.cai.desc}`);
+    lines.push(`• 阳贵神：${jiShen.yangGui.position} ${jiShen.yangGui.desc}`);
+    lines.push(`• 阴贵神：${jiShen.yinGui.position} ${jiShen.yinGui.desc}`);
+    lines.push(`━━━━━━━━━━━━━━━`);
+    if (dayYiJi.yi && dayYiJi.yi.length > 0) {
+        lines.push(`**今日宜**：${dayYiJi.yi.join(' ')}`);
+    }
+    if (dayYiJi.ji && dayYiJi.ji.length > 0) {
+        lines.push(`**今日忌**：${dayYiJi.ji.join(' ')}`);
+    }
+    lines.push(`━━━━━━━━━━━━━━━`);
+    return lines.join('\n');
+}
+// ==================== 六爻算法 ====================
 /** 八卦二进制映射表 */
 export const TRIGRAM_MAP = {
     '111': 'Qian', // 乾
@@ -138,14 +897,12 @@ export const GUA_MEANINGS = {
     'KanLi': '水在火上，既济君子以思患而豫防之',
     'LiKan': '火在水上，未济君子以慎辨物居方',
 };
-// --- 3. 核心算法函数 ---
+// ==================== 六爻核心算法函数 ====================
 /**
  * 根据二进制数组 (初->上) 获取卦象信息
  */
 export function getGuaInfo(binArray) {
-    // 下卦：初(0), 二(1), 三(2) -> 对应 Trigram 的 下,中,上 -> 索引反转: [2][1][0]
     const lowerBits = `${binArray[2]}${binArray[1]}${binArray[0]}`;
-    // 上卦：四(3), 五(4), 上(5) -> 对应 Trigram 的 下,中,上 -> 索引反转: [5][4][3]
     const upperBits = `${binArray[5]}${binArray[4]}${binArray[3]}`;
     const lowerName = TRIGRAM_MAP[lowerBits];
     const upperName = TRIGRAM_MAP[upperBits];
@@ -192,33 +949,26 @@ export function calculateFiveGua(inputStr) {
     if (parts.length !== 6) {
         throw new Error("格式错误：需要正好 6 组数据，每组 3 个数字。");
     }
-    // 1. 计算每爻的和 (6, 7, 8, 9)
     const sums = parts.map((p, idx) => {
         if (p.length !== 3 || !/^[23]+$/.test(p)) {
             throw new Error(`第 ${idx + 1} 组数据格式错误，应为 3 个 2 或 3。`);
         }
-        // 修复：明确初始值为 0，TypeScript 会推断 a 为 number
-        // a 是累加和 (number), b 是当前字符 (string)
         return p.split('').reduce((a, b) => a + parseInt(b), 0);
     });
-    // 2. 辅助：数值转二进制
     const baseBin = sums.map(toBinary);
-    // --- A. 本卦 ---
     const ben = getGuaInfo(baseBin);
     if (!ben)
         throw new Error("本卦计算失败");
-    // --- B. 变卦 (6->7(1), 9->8(0), 7->1, 8->0) ---
     const bianBin = sums.map(n => {
         if (n === 6)
-            return 1; // 老阴变阳
+            return 1;
         if (n === 9)
-            return 0; // 老阳变阴
+            return 0;
         return toBinary(n);
     });
     const bian = getGuaInfo(bianBin);
     if (!bian)
         throw new Error("变卦计算失败");
-    // --- C. 互卦 (取 1,2,3,2,3,4 索引) ---
     const huBin = [
         baseBin[1], baseBin[2], baseBin[3],
         baseBin[2], baseBin[3], baseBin[4]
@@ -226,23 +976,18 @@ export function calculateFiveGua(inputStr) {
     const hu = getGuaInfo(huBin);
     if (!hu)
         throw new Error("互卦计算失败");
-    // --- D. 综卦 (反转) ---
     const zongBin = [...baseBin].reverse();
     const zong = getGuaInfo(zongBin);
     if (!zong)
         throw new Error("综卦计算失败");
-    // --- E. 交卦 (上下卦互换) ---
-    // 原下卦(索引0,1,2)移到上方，原上卦(索引3,4,5)移到下方
     const jiaoBin = [...baseBin.slice(3, 6), ...baseBin.slice(0, 3)];
     const jiao = getGuaInfo(jiaoBin);
     if (!jiao)
         throw new Error("交卦计算失败");
-    // --- F. 错卦 (取反) ---
     const cuoBin = baseBin.map(b => b === 1 ? 0 : 1);
     const cuo = getGuaInfo(cuoBin);
     if (!cuo)
         throw new Error("错卦计算失败");
-    // 3. 提取动爻信息
     const lineNames = ["初", "二", "三", "四", "五", "上"];
     const movingLines = [];
     sums.forEach((sum, idx) => {

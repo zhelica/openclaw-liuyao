@@ -18,6 +18,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "lunar-javascript": "^1.7.7",
     "openclaw": "^2026.3.12"
   },
   "devDependencies": {
@@ -25,6 +26,8 @@
     "typescript": "^5.0.0"
   },
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   }
 }
